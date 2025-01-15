@@ -694,6 +694,7 @@ dependencies = [
  "bstr",
  "gitbutler-id",
  "gitbutler-stack",
+ "gix",
 ]
 
 [[package]]
@@ -3471,6 +3472,7 @@ dependencies = [
  "gix-features 0.39.1",
  "gix-path 0.10.13 (git+https://github.com/GitoxideLabs/gitoxide?branch=main)",
  "serde",
+ "serde",
 ]
 
 [[package]]
@@ -3536,6 +3538,7 @@ dependencies = [
  "gix-glob 0.17.1",
  "gix-path 0.10.13 (git+https://github.com/GitoxideLabs/gitoxide?branch=main)",
  "gix-trace 0.1.11 (git+https://github.com/GitoxideLabs/gitoxide?branch=main)",
+ "serde",
  "serde",
  "unicode-bom",
 ]
@@ -3621,6 +3624,18 @@ dependencies = [
 name = "gix-mailmap"
 version = "0.25.1"
 source = "git+https://github.com/GitoxideLabs/gitoxide?branch=main#af704f57bb9480c47cdd393465264d586f1d4562"
+dependencies = [
+ "bstr",
+ "gix-actor 0.33.1",
+ "gix-date 0.9.3",
+ "serde",
+ "thiserror 2.0.9",
+]
+
+[[package]]
+name = "gix-mailmap"
+version = "0.25.1"
+source = "git+https://github.com/GitoxideLabs/gitoxide?rev=a22f13bec0cdd580ee92390a98d5d522eb29978d#a22f13bec0cdd580ee92390a98d5d522eb29978d"
 dependencies = [
  "bstr",
  "gix-actor 0.33.1",
@@ -3940,6 +3955,7 @@ dependencies = [
  "gix-object 0.46.1",
  "gix-revwalk 0.17.0",
  "gix-trace 0.1.11 (git+https://github.com/GitoxideLabs/gitoxide?branch=main)",
+ "serde",
  "serde",
  "thiserror 2.0.9",
 ]

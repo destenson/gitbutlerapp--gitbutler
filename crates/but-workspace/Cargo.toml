@@ -11,5 +11,12 @@ doctest = false
 [dependencies]
 anyhow.workspace = true
 bstr.workspace = true
+gix = { workspace = true, features = [
+    "dirwalk",
+    "credentials",
+    "parallel",
+    "serde",
+    "status",
+] }
 gitbutler-id.workspace = true
 gitbutler-stack.workspace = true
