@@ -13,6 +13,7 @@ import type {
 	PullRequest
 } from '../interface/types';
 import type { Octokit } from '@octokit/rest';
+import { projectDeleteRemoteBranchAfterMerge } from '$lib/config/config';
 
 export class GitHubPrService implements ForgePrService {
 	loading = writable(false);
@@ -22,7 +23,9 @@ export class GitHubPrService implements ForgePrService {
 		private repo: RepoInfo,
 		private baseBranch: string,
 		private posthog?: PostHogWrapper
-	) {}
+	) {
+		console.log(projectDeleteRemoteBranchAfterMerge());
+	}
 
 	async createPr({
 		title,
@@ -84,6 +87,10 @@ export class GitHubPrService implements ForgePrService {
 			pull_number: prNumber,
 			merge_method: method
 		});
+
+		if (true) {
+			console.log('SHOULD DELETE BRNACH');
+		}
 	}
 
 	async reopen(prNumber: number) {
