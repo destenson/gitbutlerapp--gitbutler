@@ -27,6 +27,7 @@ use gitbutler_stack::{stack_context::StackContext, Stack, Target, VirtualBranche
 use gix::ObjectId;
 use integrated::IsCommitIntegrated;
 use std::path::Path;
+use std::str::FromStr;
 
 mod integrated;
 
@@ -142,10 +143,7 @@ pub struct ApiStackBranch {
 
 /// Provides the relevant details of a particular [`gitbutler_stack::Stack`]
 /// The entries are ordered from newest to oldest.
-pub fn stack_branches(
-    stack_id: Id<gitbutler_stack::Stack>,
-    ctx: &CommandContext,
-) -> Result<Vec<ApiStackBranch>> {
+pub fn stack_branches(stack_id: String, ctx: &CommandContext) -> Result<Vec<ApiStackBranch>> {
     let state = state_handle(&ctx.project().gb_dir());
     let default_target = state
         .get_default_target()
@@ -158,7 +156,7 @@ pub fn stack_branches(
     let mut check_commit = IsCommitIntegrated::new(ctx, &default_target, &repo, &mut graph)?;
 
     let mut stack_branches = vec![];
-    let stack = state.get_stack(stack_id)?;
+    let stack = state.get_stack(Id::from_str(&stack_id)?)?;
     for internal in stack.branches() {
         let result = convert(
             stack_ctx,
