@@ -16,11 +16,19 @@
 //!   - High level documentation here: https://docs.gitbutler.com/features/stacked-branches
 //!
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use bstr::BString;
+use gitbutler_command_context::CommandContext;
+use gitbutler_commit::commit_ext::CommitExt;
 use gitbutler_id::id::Id;
-use gitbutler_stack::VirtualBranchesHandle;
+use gitbutler_oxidize::OidExt;
+use gitbutler_stack::stack_context::CommandContextExt;
+use gitbutler_stack::{stack_context::StackContext, Stack, Target, VirtualBranchesHandle};
+use gix::ObjectId;
+use integrated::IsCommitIntegrated;
 use std::path::Path;
+
+mod integrated;
 
 /// Represents a lightweight version of a [`gitbutler_stack::Stack`] for listing.
 #[derive(Debug, Clone)]
@@ -70,7 +78,7 @@ pub enum CommitState {
 
 /// Commit that is a part of a [`StackBranch`] and, as such, containing state derived in relation to the specific branch.
 #[derive(Debug, Clone)]
-pub struct StackBranchCommit {
+pub struct ApiStackBranchCommit {
     /// The OID of the commit.
     pub id: gix::ObjectId,
     /// The message of the commit.
@@ -96,16 +104,26 @@ pub struct UpstreamCommit {
     pub message: BString,
 }
 
+impl ApiStackBranchCommit {
+    fn matches(&self, id: ObjectId) -> bool {
+        self.id == id
+            || match self.state {
+                CommitState::LocalAndRemote(remote_commit_id) => remote_commit_id == id,
+                _ => false,
+            }
+    }
+}
+
 /// Replesents a branch in a [`gitbutler_stack::Stack`]. It contains commits derived from the local pseudo branch and it's respective remote
 #[derive(Debug, Clone)]
-pub struct StackBranch {
+pub struct ApiStackBranch {
     /// The name of the branch.
     pub name: BString,
     /// Upstream reference, e.g. `refs/remotes/origin/base-branch-improvements`
     pub upstream_refrence: Option<BString>,
     /// List of commits beloning to this branch. Ordered from newest to oldest.
     /// Created from the local pseudo branch (head currently stored in the TOML file)
-    pub commits: Vec<StackBranchCommit>,
+    pub commits: Vec<ApiStackBranchCommit>,
     /// List of commits that exist **only** on the upstream branch. Ordered from newest to oldest.
     /// Created from the tip of the local tracking branch eg. refs/remotes/origin/my-branch -> refs/heads/my-branch
     pub upstream_commits: Vec<UpstreamCommit>,
@@ -115,11 +133,123 @@ pub struct StackBranch {
     /// The pull(merge) request associated with the branch, or None if no such entity has not been created.
     /// This is provided by the UI which is also responsible for creating Pull Requests.
     pub pr_number: Option<usize>,
+    /// A unique identifier for the GitButler review associated with the branch, if any.
+    pub review_id: Option<String>,
+    /// Archived represents the state when series/branch has been integrated and is below the merge base of the branch.
+    /// This would occur when the branch has been merged at the remote and the workspace has been updated with that change.
+    pub archived: bool,
 }
 
 /// Provides the relevant details of a particular [`gitbutler_stack::Stack`]
-pub fn stack_branches() -> Result<()> {
-    Ok(())
+/// The entries are ordered from newest to oldest.
+pub fn stack_branches(
+    stack_id: Id<gitbutler_stack::Stack>,
+    ctx: &CommandContext,
+) -> Result<Vec<ApiStackBranch>> {
+    let state = state_handle(&ctx.project().gb_dir());
+    let default_target = state
+        .get_default_target()
+        .context("failed to get default target")?;
+    let stack_ctx = &ctx.to_stack_context()?;
+
+    let repo = ctx.gix_repository()?;
+    let cache = repo.commit_graph_if_enabled()?;
+    let mut graph = repo.revision_graph(cache.as_ref());
+    let mut check_commit = IsCommitIntegrated::new(ctx, &default_target, &repo, &mut graph)?;
+
+    let mut stack_branches = vec![];
+    let stack = state.get_stack(stack_id)?;
+    for internal in stack.branches() {
+        let result = convert(
+            stack_ctx,
+            internal,
+            &stack,
+            &default_target,
+            &mut check_commit,
+            stack_branches.clone(),
+        )?;
+        stack_branches.push(result);
+    }
+    stack_branches.reverse();
+    Ok(stack_branches)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn convert(
+    ctx: &StackContext<'_>,
+    stack_branch: gitbutler_stack::StackBranch,
+    stack: &Stack,
+    default_target: &Target,
+    check_commit: &mut IsCommitIntegrated<'_, '_, '_>,
+    parent_series: Vec<ApiStackBranch>,
+) -> Result<ApiStackBranch> {
+    let branch_commits = stack_branch.commits(ctx, stack)?;
+    let remote = default_target.push_remote_name();
+    let mut patches: Vec<ApiStackBranchCommit> = vec![];
+    let mut is_integrated = false;
+
+    // Reverse first instead of later, so that we catch the first integrated commit
+    for commit in branch_commits.clone().local_commits.iter().rev() {
+        if !is_integrated {
+            is_integrated = check_commit.is_integrated(commit)?;
+        }
+        let api_commit = ApiStackBranchCommit {
+            id: commit.id().to_gix(),
+            message: commit.message_bstr().into(),
+            has_conflicts: commit.is_conflicted(),
+            state: CommitState::LocalOnly, // TODO: implement this
+        };
+        patches.push(api_commit);
+    }
+    // There should be no duplicates, but dedup because the UI cant handle duplicates
+    patches.dedup_by(|a, b| a.id == b.id);
+
+    let mut upstream_patches = vec![];
+    for commit in branch_commits.remote_commits.iter().rev() {
+        if patches.iter().any(|p| p.matches(commit.id().to_gix())) {
+            // Skip if we already have this commit in the list
+            continue;
+        }
+
+        if parent_series.iter().any(|series| {
+            if series.archived {
+                return false;
+            };
+
+            series
+                .commits
+                .iter()
+                .any(|p| p.matches(commit.id().to_gix()))
+        }) {
+            // Skip if we already have this commit in the list
+            continue;
+        }
+
+        let upstream_commit = UpstreamCommit {
+            id: commit.id().to_gix(),
+            message: commit.message_bstr().into(),
+        };
+        upstream_patches.push(upstream_commit);
+    }
+    upstream_patches.reverse();
+    // There should be no duplicates, but dedup because the UI cant handle duplicates
+    upstream_patches.dedup_by(|a, b| a.id == b.id);
+
+    let upstream_reference = ctx
+        .repository()
+        .find_reference(&stack_branch.remote_reference(remote.as_str()))
+        .ok()
+        .map(|_| stack_branch.remote_reference(remote.as_str()));
+    Ok(ApiStackBranch {
+        name: stack_branch.name.into(),
+        upstream_refrence: upstream_reference.map(Into::into),
+        commits: patches,
+        upstream_commits: upstream_patches,
+        description: stack_branch.description.map(Into::into),
+        pr_number: stack_branch.pr_number,
+        review_id: Some(stack_branch.review_id),
+        archived: stack_branch.archived,
+    })
 }
 
 fn state_handle(gb_state_path: &Path) -> VirtualBranchesHandle {
