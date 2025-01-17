@@ -20,7 +20,9 @@ pub enum Subcommands {
     Status,
     /// Returns the list of stacks that are currently part of the GitButler workspace.
     Stacks,
-    StackBranches { id: String },
+    StackBranches {
+        id: String,
+    },
 }
 
 #[cfg(test)]
